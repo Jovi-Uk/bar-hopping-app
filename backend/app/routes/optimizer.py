@@ -1,10 +1,10 @@
 # =============================================================================
-# API Routes - Optimizer Endpoints (FIXED - Robust error handling)
+# API Routes - BACKWARD COMPATIBLE (works with old AND new frontend)
 # =============================================================================
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import traceback
 
 from ..services.nlu import parse_user_request, VALID_BARS
@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 # =============================================================================
-# Request/Response Models
+# Request/Response Models - BACKWARD COMPATIBLE
 # =============================================================================
 
 class RouteRequest(BaseModel):
@@ -35,7 +35,9 @@ class StopInfo(BaseModel):
 
 
 class RouteResponse(BaseModel):
+    # BOTH formats for compatibility
     success: bool
+    status: str  # "success" or "error" - for old frontend
     message: str
     itinerary: List[StopInfo] = []
     total_wait_time: int = 0
@@ -57,29 +59,18 @@ class BarsListResponse(BaseModel):
     count: int
 
 
-class ModelHealthResponse(BaseModel):
-    status: str
-    model_backend: str
-    model_available: bool
-    message: str
-    gpu_available: bool = False
-    gpu_name: Optional[str] = None
-
-
 # =============================================================================
 # Routes
 # =============================================================================
 
 @router.post("/optimize", response_model=RouteResponse)
 async def optimize_bar_route(request: RouteRequest):
-    """
-    Main endpoint - parse request, optimize route, generate response.
-    """
+    """Main endpoint - parse request, optimize route, generate response."""
     try:
-        # Validate input
         if not request.message or not request.message.strip():
             return RouteResponse(
                 success=False,
+                status="error",
                 message="Please tell me which bars you'd like to visit! For example: 'Let's hit Chimy's and Cricket's at 9pm'",
                 itinerary=[],
                 total_wait_time=0,
@@ -89,24 +80,20 @@ async def optimize_bar_route(request: RouteRequest):
                 llm_used=False
             )
         
-        # Parse user request with NLU
         parsed = parse_user_request(request.message)
-        
-        # Safe extraction with defaults
         bars = parsed.get("bars", [])
         start_time = safe_float(parsed.get("start_time"), 21.0)
         is_game_day = bool(parsed.get("is_game_day", False))
         
-        # Use group_size from request if provided, else from parsed, else default
         if request.group_size is not None:
             group_size = safe_int(request.group_size, 2)
         else:
             group_size = safe_int(parsed.get("group_size"), 2)
         
-        # Check if any bars were found
         if not bars:
             return RouteResponse(
                 success=False,
+                status="error",
                 message=f"I couldn't find any bar names in your request. Available bars: {', '.join(VALID_BARS)}. Try something like 'Chimy's and Cricket's at 9pm'",
                 itinerary=[],
                 total_wait_time=0,
@@ -116,14 +103,13 @@ async def optimize_bar_route(request: RouteRequest):
                 llm_used=False
             )
         
-        # Optimize the route
         best_route, result = optimize_route(bars, start_time, group_size, is_game_day)
         
-        # Handle infeasible route
         if best_route is None or result is None or not result.get("feasible", False):
             reason = result.get("reason", "Route not feasible") if result else "Could not plan route"
             return RouteResponse(
                 success=False,
+                status="error",
                 message=f"Couldn't plan that route: {reason}. Try an earlier time or different bars.",
                 itinerary=[],
                 total_wait_time=0,
@@ -133,7 +119,6 @@ async def optimize_bar_route(request: RouteRequest):
                 llm_used=False
             )
         
-        # Build itinerary
         itinerary = []
         for step in result.get("steps", []):
             arrival = safe_float(step.get("arrival"), 21.0)
@@ -149,7 +134,6 @@ async def optimize_bar_route(request: RouteRequest):
         
         total_wait = safe_int(result.get("total_wait"), 0)
         
-        # Generate LLM response if requested
         llm_used = False
         if request.use_llm:
             try:
@@ -172,6 +156,7 @@ async def optimize_bar_route(request: RouteRequest):
         
         return RouteResponse(
             success=True,
+            status="success",  # For old frontend compatibility
             message=message,
             itinerary=itinerary,
             total_wait_time=total_wait,
@@ -186,6 +171,7 @@ async def optimize_bar_route(request: RouteRequest):
         traceback.print_exc()
         return RouteResponse(
             success=False,
+            status="error",
             message=f"Something went wrong: {str(e)}. Please try a simpler request like 'Chimy's and Cricket's at 9pm'",
             itinerary=[],
             total_wait_time=0,
@@ -242,26 +228,56 @@ async def get_single_bar(bar_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/model/health", response_model=ModelHealthResponse)
+@router.get("/model/health")
 async def model_health():
-    """Check if the LLM is available."""
+    """
+    Check if the LLM is available.
+    Returns BOTH flat and nested format for frontend compatibility.
+    """
     try:
         health = check_model_health()
-        return ModelHealthResponse(
-            status="ok" if health.get("available", False) else "degraded",
-            model_backend=health.get("backend", "unknown"),
-            model_available=health.get("available", False),
-            message=health.get("message", "Unknown status"),
-            gpu_available=health.get("gpu_available", False),
-            gpu_name=health.get("gpu_name")
-        )
+        is_available = health.get("available", False)
+        backend = health.get("backend", "unknown")
+        gpu_available = health.get("gpu_available", False)
+        gpu_name = health.get("gpu_name")
+        msg = health.get("message", "Unknown status")
+        
+        # Return BOTH formats for compatibility
+        return {
+            # New flat format
+            "status": "ok" if is_available else "degraded",
+            "model_backend": backend,
+            "model_available": is_available,
+            "message": msg,
+            "gpu_available": gpu_available,
+            "gpu_name": gpu_name,
+            # Old nested format for backward compatibility
+            "model": {
+                "backend": backend,
+                "available": is_available,
+                "message": msg
+            },
+            "gpu": {
+                "available": gpu_available,
+                "name": gpu_name
+            }
+        }
     except Exception as e:
         print(f"Error checking model health: {e}")
-        return ModelHealthResponse(
-            status="error",
-            model_backend="unknown",
-            model_available=False,
-            message=str(e),
-            gpu_available=False,
-            gpu_name=None
-        )
+        return {
+            "status": "error",
+            "model_backend": "unknown",
+            "model_available": False,
+            "message": str(e),
+            "gpu_available": False,
+            "gpu_name": None,
+            "model": {
+                "backend": "unknown",
+                "available": False,
+                "message": str(e)
+            },
+            "gpu": {
+                "available": False,
+                "name": None
+            }
+        }

@@ -62,6 +62,8 @@ class ModelHealthResponse(BaseModel):
     model_backend: str
     model_available: bool
     message: str
+    gpu_available: bool = False
+    gpu_name: Optional[str] = None
 
 
 # =============================================================================
@@ -249,7 +251,9 @@ async def model_health():
             status="ok" if health.get("available", False) else "degraded",
             model_backend=health.get("backend", "unknown"),
             model_available=health.get("available", False),
-            message=health.get("message", "Unknown status")
+            message=health.get("message", "Unknown status"),
+            gpu_available=health.get("gpu_available", False),
+            gpu_name=health.get("gpu_name")
         )
     except Exception as e:
         print(f"Error checking model health: {e}")
@@ -257,5 +261,7 @@ async def model_health():
             status="error",
             model_backend="unknown",
             model_available=False,
-            message=str(e)
+            message=str(e),
+            gpu_available=False,
+            gpu_name=None
         )

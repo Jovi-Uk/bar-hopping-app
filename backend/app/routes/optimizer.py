@@ -1,119 +1,51 @@
 # =============================================================================
-# backend/app/routes/optimizer.py
-# =============================================================================
-# This file defines all the API endpoints for the bar hopping optimizer.
-# It's the "controller" layer that receives HTTP requests, coordinates
-# between services (NLU, simulation, LLM), and returns responses.
-#
-# The main endpoint is POST /api/optimize which:
-# 1. Parses the user's natural language request (NLU service)
-# 2. Calculates the optimal route (simulation service)
-# 3. Generates a friendly response (model service / LLM)
+# API Routes - Optimizer Endpoints (FIXED - Robust error handling)
 # =============================================================================
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
-import logging
+import traceback
 
-# Import our service modules
-from app.services.nlu import parse_user_request
-from app.services.simulation import optimize_route, get_all_bars, get_bar_info
-from app.services.model import (
-    generate_response,
-    generate_fallback_response,
-    check_model_health,
-    MODEL_BACKEND
+from ..services.nlu import parse_user_request, VALID_BARS
+from ..services.simulation import (
+    optimize_route, simulate_route, get_all_bars, get_bar_info,
+    format_time, safe_float, safe_int
 )
+from ..services.model import generate_response, check_model_health
 
-# Set up logging so we can see what's happening
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Create the router - this groups all our endpoints together
 router = APIRouter()
 
 
 # =============================================================================
-# Pydantic Models for Request/Response Validation
+# Request/Response Models
 # =============================================================================
-# Pydantic models define the structure of data going in and out of our API.
-# FastAPI uses these to automatically validate requests and generate docs.
-# If a request doesn't match the model, FastAPI returns a clear error.
 
 class RouteRequest(BaseModel):
-    """
-    The request body for the /optimize endpoint.
-    
-    Attributes:
-        message: Natural language request like "let's hit chimys at 9pm"
-        group_size: Number of people (optional, default 2)
-        use_llm: Whether to use the LLM for response generation
-    """
-    message: str = Field(
-        ...,  # ... means this field is required
-        description="Natural language request describing the bar hopping plan",
-        example="yo let's hit chimys and crickets at 9pm"
-    )
-    group_size: Optional[int] = Field(
-        default=2,
-        ge=1,   # Must be >= 1
-        le=20,  # Must be <= 20
-        description="Number of people in the group"
-    )
-    use_llm: bool = Field(
-        default=True,
-        description="Whether to use the LLM for natural response generation"
-    )
+    message: str = Field(..., description="User's natural language request")
+    group_size: Optional[int] = Field(default=2, description="Number of people")
+    use_llm: Optional[bool] = Field(default=True, description="Use LLM for response")
 
 
 class StopInfo(BaseModel):
-    """Information about a single stop in the itinerary."""
-    venue_name: str = Field(description="Name of the bar")
-    arrival_time: str = Field(description="When to arrive (HH:MM format)")
-    departure_time: str = Field(description="When to leave (HH:MM format)")
-    expected_wait: int = Field(description="Expected wait time in minutes")
-
-
-class ParsedInfo(BaseModel):
-    """What the NLU extracted from the user's request."""
-    bars: List[str] = Field(description="Bars identified in the request")
-    start_time: Optional[float] = Field(description="Start time as decimal hours")
-    group_size: int = Field(description="Number of people")
-    is_game_day: bool = Field(description="Whether it's a game day")
+    venue_name: str
+    arrival_time: str
+    departure_time: str
+    expected_wait: int
 
 
 class RouteResponse(BaseModel):
-    """
-    The response from the /optimize endpoint.
-    Contains the optimized itinerary and a natural language message.
-    """
-    status: str = Field(
-        description="'success', 'infeasible', or 'error'"
-    )
-    itinerary: List[StopInfo] = Field(
-        default=[],
-        description="Ordered list of stops"
-    )
-    total_wait_time: int = Field(
-        default=0,
-        description="Total wait time in minutes"
-    )
-    message: str = Field(
-        description="Human-readable response message"
-    )
-    parsed_info: Optional[ParsedInfo] = Field(
-        default=None,
-        description="What was extracted from the request"
-    )
-    llm_used: bool = Field(
-        default=False,
-        description="Whether the LLM generated the message"
-    )
+    success: bool
+    message: str
+    itinerary: List[StopInfo] = []
+    total_wait_time: int = 0
+    parsed_bars: List[str] = []
+    parsed_time: str = ""
+    is_game_day: bool = False
+    llm_used: bool = False
 
 
 class BarInfo(BaseModel):
-    """Information about a single bar."""
     name: str
     capacity: int
     popularity: int
@@ -121,254 +53,209 @@ class BarInfo(BaseModel):
 
 
 class BarsListResponse(BaseModel):
-    """Response containing all available bars."""
     bars: List[BarInfo]
     count: int
 
 
+class ModelHealthResponse(BaseModel):
+    status: str
+    model_backend: str
+    model_available: bool
+    message: str
+
+
 # =============================================================================
-# API Endpoints
+# Routes
 # =============================================================================
 
 @router.post("/optimize", response_model=RouteResponse)
 async def optimize_bar_route(request: RouteRequest):
     """
-    Process a natural language request and return an optimized bar route.
-    
-    This is the main endpoint of the application. It:
-    1. Parses the natural language input using NLU
-    2. Optimizes the route using simulation
-    3. Generates a friendly response using the LLM (if available)
-    
-    Example requests:
-    - "yo let's hit chimys and crickets at 9pm"
-    - "plan a route for Bier Haus, Atomic, and Bar PM at 8"
-    - "me and 5 friends need bars for game day at 7:30pm"
+    Main endpoint - parse request, optimize route, generate response.
     """
     try:
-        # =====================================================================
-        # Step 1: Parse the natural language request
-        # =====================================================================
-        # The NLU service extracts structured data from casual language.
-        # It handles typos, nicknames, and various phrasings.
+        # Validate input
+        if not request.message or not request.message.strip():
+            return RouteResponse(
+                success=False,
+                message="Please tell me which bars you'd like to visit! For example: 'Let's hit Chimy's and Cricket's at 9pm'",
+                itinerary=[],
+                total_wait_time=0,
+                parsed_bars=[],
+                parsed_time="",
+                is_game_day=False,
+                llm_used=False
+            )
         
-        logger.info(f"Processing request: {request.message}")
+        # Parse user request with NLU
         parsed = parse_user_request(request.message)
         
-        # Create the parsed info for the response
-        parsed_info = ParsedInfo(
-            bars=parsed.get("bars", []),
-            start_time=parsed.get("start_time"),
-            group_size=parsed.get("group_size", 2),
-            is_game_day=parsed.get("is_game_day", False)
-        )
+        # Safe extraction with defaults
+        bars = parsed.get("bars", [])
+        start_time = safe_float(parsed.get("start_time"), 21.0)
+        is_game_day = bool(parsed.get("is_game_day", False))
         
-        logger.info(f"Parsed: bars={parsed['bars']}, time={parsed.get('start_time')}")
+        # Use group_size from request if provided, else from parsed, else default
+        if request.group_size is not None:
+            group_size = safe_int(request.group_size, 2)
+        else:
+            group_size = safe_int(parsed.get("group_size"), 2)
         
-        # Check if we found any bars
-        if not parsed["bars"]:
-            # No bars found - return helpful error message
-            llm_message = None
-            if request.use_llm:
-                llm_message = await generate_response(
-                    user_message=request.message,
-                    route_info={"feasible": False, "reason": "No bars identified"},
-                    parsed_info=parsed
-                )
-            
+        # Check if any bars were found
+        if not bars:
             return RouteResponse(
-                status="error",
+                success=False,
+                message=f"I couldn't find any bar names in your request. Available bars: {', '.join(VALID_BARS)}. Try something like 'Chimy's and Cricket's at 9pm'",
                 itinerary=[],
                 total_wait_time=0,
-                message=llm_message or (
-                    "I couldn't identify any bars in your request. "
-                    "Try mentioning specific bars like Chimy's, Cricket's, "
-                    "Bier Haus, or Atomic!"
-                ),
-                parsed_info=parsed_info,
-                llm_used=llm_message is not None
+                parsed_bars=[],
+                parsed_time=format_time(start_time),
+                is_game_day=is_game_day,
+                llm_used=False
             )
         
-        # =====================================================================
-        # Step 2: Run the route optimization
-        # =====================================================================
-        # The simulation service calculates wait times and finds the optimal
-        # order to visit the bars.
+        # Optimize the route
+        best_route, result = optimize_route(bars, start_time, group_size, is_game_day)
         
-        group_size = request.group_size or parsed.get("group_size", 2)
-        start_time = parsed.get("start_time", 21.0)  # Default 9 PM
-        is_game_day = parsed.get("is_game_day", False)
-        
-        best_route, result = optimize_route(
-            bars=parsed["bars"],
-            start_hour=start_time,
-            group_size=group_size,
-            is_game_day=is_game_day
-        )
-        
-        # =====================================================================
-        # Step 3: Generate response message
-        # =====================================================================
-        # Use the LLM if available, otherwise fall back to rule-based response
-        
-        llm_used = False
-        message = None
-        
-        if not result or not result.get("feasible"):
-            # Route infeasible - generate helpful explanation
-            route_info_for_llm = {
-                "feasible": False,
-                "reason": result.get("reason", "Unknown") if result else "No route",
-                "total_wait": 0,
-                "steps": []
-            }
-            
-            if request.use_llm:
-                message = await generate_response(
-                    user_message=request.message,
-                    route_info=route_info_for_llm,
-                    parsed_info=parsed
-                )
-                llm_used = message is not None
-            
-            if not message:
-                message = generate_fallback_response(route_info_for_llm, parsed)
-            
+        # Handle infeasible route
+        if best_route is None or result is None or not result.get("feasible", False):
+            reason = result.get("reason", "Route not feasible") if result else "Could not plan route"
             return RouteResponse(
-                status="infeasible",
+                success=False,
+                message=f"Couldn't plan that route: {reason}. Try an earlier time or different bars.",
                 itinerary=[],
                 total_wait_time=0,
-                message=message,
-                parsed_info=parsed_info,
-                llm_used=llm_used
+                parsed_bars=bars,
+                parsed_time=format_time(start_time),
+                is_game_day=is_game_day,
+                llm_used=False
             )
         
-        # Route is feasible - format the itinerary
+        # Build itinerary
         itinerary = []
         for step in result.get("steps", []):
+            arrival = safe_float(step.get("arrival"), 21.0)
+            departure = safe_float(step.get("departure"), 22.0)
+            wait = safe_int(step.get("wait"), 5)
+            
             itinerary.append(StopInfo(
-                venue_name=step["bar"],
-                arrival_time=step["arrival"],
-                departure_time=step["depart"],
-                expected_wait=step["wait"]
+                venue_name=step.get("bar", "Unknown"),
+                arrival_time=format_time(arrival),
+                departure_time=format_time(departure),
+                expected_wait=wait
             ))
         
-        # Generate natural language response
-        route_info_for_llm = {
-            "feasible": True,
-            "total_wait": result.get("total_wait", 0),
-            "steps": result.get("steps", []),
-            "reason": None
-        }
+        total_wait = safe_int(result.get("total_wait"), 0)
         
+        # Generate LLM response if requested
+        llm_used = False
         if request.use_llm:
-            message = await generate_response(
-                user_message=request.message,
-                route_info=route_info_for_llm,
-                parsed_info=parsed
-            )
-            llm_used = message is not None
-        
-        if not message:
-            message = generate_fallback_response(route_info_for_llm, parsed)
-        
-        logger.info(f"Returning route with {len(itinerary)} stops, LLM={llm_used}")
+            try:
+                llm_response = await generate_response(
+                    user_message=request.message,
+                    route=best_route,
+                    result=result,
+                    is_game_day=is_game_day
+                )
+                if llm_response and llm_response != "":
+                    message = llm_response
+                    llm_used = True
+                else:
+                    message = _generate_fallback_message(best_route, total_wait, is_game_day)
+            except Exception as e:
+                print(f"LLM error (using fallback): {e}")
+                message = _generate_fallback_message(best_route, total_wait, is_game_day)
+        else:
+            message = _generate_fallback_message(best_route, total_wait, is_game_day)
         
         return RouteResponse(
-            status="success",
-            itinerary=itinerary,
-            total_wait_time=result.get("total_wait", 0),
+            success=True,
             message=message,
-            parsed_info=parsed_info,
+            itinerary=itinerary,
+            total_wait_time=total_wait,
+            parsed_bars=bars,
+            parsed_time=format_time(start_time),
+            is_game_day=is_game_day,
             llm_used=llm_used
         )
         
     except Exception as e:
-        logger.error(f"Error in optimize endpoint: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred: {str(e)}"
+        print(f"Error in optimize endpoint: {e}")
+        traceback.print_exc()
+        return RouteResponse(
+            success=False,
+            message=f"Something went wrong: {str(e)}. Please try a simpler request like 'Chimy's and Cricket's at 9pm'",
+            itinerary=[],
+            total_wait_time=0,
+            parsed_bars=[],
+            parsed_time="",
+            is_game_day=False,
+            llm_used=False
         )
+
+
+def _generate_fallback_message(route: List[str], total_wait: int, is_game_day: bool) -> str:
+    """Generate a simple response when LLM is unavailable."""
+    if not route:
+        return "I couldn't plan a route with those bars."
+    
+    route_str = " → ".join(route)
+    game_day_note = " It's game day, so expect bigger crowds!" if is_game_day else ""
+    
+    return f"Here's your optimized route: {route_str}. Total expected wait: ~{total_wait} minutes.{game_day_note} Have fun! 🍺"
 
 
 @router.get("/bars", response_model=BarsListResponse)
 async def list_bars():
-    """
-    Get a list of all available bars with their information.
-    Useful for showing users what options are available.
-    """
+    """Get all available bars."""
     try:
-        bars_data = get_all_bars()
-        bars_list = [
+        bars = get_all_bars()
+        bar_list = [
             BarInfo(
-                name=bar["name"],
-                capacity=bar.get("capacity", 100),
-                popularity=bar.get("popularity", 3),
-                base_wait=bar.get("base_wait", 10)
+                name=b["name"],
+                capacity=b["capacity"],
+                popularity=b["popularity"],
+                base_wait=b["base_wait"]
             )
-            for bar in bars_data
+            for b in bars
         ]
-        
-        return BarsListResponse(
-            bars=bars_list,
-            count=len(bars_list)
-        )
-        
+        return BarsListResponse(bars=bar_list, count=len(bar_list))
     except Exception as e:
+        print(f"Error listing bars: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/bars/{bar_name}")
 async def get_single_bar(bar_name: str):
-    """Get detailed information about a specific bar."""
+    """Get info for a specific bar."""
     try:
-        bar_info = get_bar_info(bar_name)
-        
-        if not bar_info:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Bar '{bar_name}' not found"
-            )
-        
-        return bar_info
-        
+        bar = get_bar_info(bar_name)
+        if not bar:
+            raise HTTPException(status_code=404, detail=f"Bar '{bar_name}' not found")
+        return bar
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Error getting bar info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/model/health")
+@router.get("/model/health", response_model=ModelHealthResponse)
 async def model_health():
-    """
-    Check the health and availability of the LLM service.
-    
-    Returns information about:
-    - Which model backend is configured
-    - Whether the model is available
-    - GPU availability
-    """
+    """Check if the LLM is available."""
     try:
-        status = await check_model_health()
-        return {
-            "status": "healthy" if status["available"] else "degraded",
-            "model": {
-                "backend": status["backend"],
-                "available": status["available"],
-                "message": status["message"]
-            },
-            "gpu": {
-                "available": status.get("gpu_available", False),
-                "name": status.get("gpu_name", None)
-            }
-        }
+        health = check_model_health()
+        return ModelHealthResponse(
+            status="ok" if health.get("available", False) else "degraded",
+            model_backend=health.get("backend", "unknown"),
+            model_available=health.get("available", False),
+            message=health.get("message", "Unknown status")
+        )
     except Exception as e:
-        return {
-            "status": "error",
-            "model": {
-                "backend": MODEL_BACKEND,
-                "available": False,
-                "message": str(e)
-            },
-            "gpu": {"available": False, "name": None}
-        }
+        print(f"Error checking model health: {e}")
+        return ModelHealthResponse(
+            status="error",
+            model_backend="unknown",
+            model_available=False,
+            message=str(e)
+        )

@@ -1,92 +1,73 @@
 # =============================================================================
-# backend/app/services/model.py
-# =============================================================================
-# This service handles all interaction with the fine-tuned LLM (Language Model).
-# The model generates natural, conversational responses based on the route
-# optimization results.
-#
-# The service supports multiple backends:
-# - "local": Load the model directly on this server (requires GPU)
-# - "huggingface": Use HuggingFace Inference Endpoints API
-# - "disabled": No LLM, use rule-based responses only
-#
-# This flexibility allows the app to work in different deployment scenarios,
-# from local development (disabled) to production (local with GPU).
+# LLM Service (FIXED - Robust type handling and error handling)
 # =============================================================================
 
 import os
-import json
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Configuration from Environment Variables
-# =============================================================================
-# These values are set in the .env file locally, and in Railway's environment
-# variables in production.
-
+# Configuration
 MODEL_BACKEND = os.environ.get("MODEL_BACKEND", "disabled").lower()
 HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "microsoft/Phi-3.5-mini-instruct")
 HF_LORA_ID = os.environ.get("HF_LORA_ID", "")
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
-HF_INFERENCE_URL = os.environ.get("HF_INFERENCE_URL", "")
 
-# Model generation parameters
 MAX_NEW_TOKENS = 512
 TEMPERATURE = 0.7
-TOP_P = 0.9
 
-# Global model instance (for local loading - loaded once, reused for all requests)
+# Global model cache
 _model = None
 _tokenizer = None
 _model_loaded = False
 
-
-# =============================================================================
-# System Prompt
-# =============================================================================
-# This prompt defines the model's personality and response style. It was used
-# during fine-tuning to ensure consistent, helpful responses.
-
-SYSTEM_PROMPT = """You are a friendly bar hopping assistant for Lubbock, Texas. Your job is to help users plan their night out by providing optimized bar routes.
-
-When given a route with bar information, respond in a conversational, friendly tone. Include:
-1. A warm greeting or acknowledgment
-2. The optimized route as a clear itinerary
-3. Total expected wait time
-4. Any helpful tips based on the time, group size, or game day status
-
-Format times in 12-hour format (9:30 PM, not 21:30).
-Keep responses concise but friendly.
-Use emojis sparingly to add personality (🍺, 🎉, ⏰).
-
-If the route is infeasible, explain why in a helpful way and suggest alternatives."""
+SYSTEM_PROMPT = """You are a friendly bar hopping assistant for Lubbock, Texas. Help users plan their night out with optimized bar routes. Be conversational, concise, and friendly. Use emojis sparingly."""
 
 
-# =============================================================================
-# Local Model Loading
-# =============================================================================
-# These functions handle loading and running the model locally. This requires
-# a GPU with at least 8GB of VRAM.
+def safe_float(value, default: float = 21.0) -> float:
+    """Safely convert to float."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except:
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    """Safely convert to int."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except:
+        return default
+
+
+def format_time_12h(decimal_hour) -> str:
+    """Convert decimal hour (float) to 12h format string."""
+    decimal_hour = safe_float(decimal_hour, 21.0)
+    
+    if decimal_hour >= 24:
+        decimal_hour -= 24
+    
+    hours = int(decimal_hour)
+    minutes = int((decimal_hour - hours) * 60)
+    
+    period = "PM" if 12 <= hours < 24 else "AM"
+    display_hour = hours % 12
+    if display_hour == 0:
+        display_hour = 12
+    
+    return f"{display_hour}:{minutes:02d} {period}"
+
 
 def load_model_local():
-    """
-    Load the fine-tuned Phi-3.5 model locally with LoRA adapters.
-    
-    Uses 4-bit quantization to reduce memory usage, making it possible to run
-    on smaller GPUs. The model is loaded once and cached for subsequent requests.
-    
-    Returns:
-        Tuple of (model, tokenizer) or (None, None) if loading fails
-    """
+    """Load the model locally with LoRA adapters."""
     global _model, _tokenizer, _model_loaded
     
-    # Return cached model if already loaded
     if _model_loaded:
         return _model, _tokenizer
     
@@ -97,15 +78,10 @@ def load_model_local():
         
         logger.info(f"Loading model: {HF_MODEL_ID}")
         
-        # Check for GPU
         if not torch.cuda.is_available():
-            logger.warning("No GPU available - model loading may fail or be very slow")
-        else:
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-            logger.info(f"GPU: {gpu_name} ({gpu_memory:.1f} GB)")
+            logger.warning("No GPU available")
+            return None, None
         
-        # Configure 4-bit quantization for memory efficiency
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -113,17 +89,10 @@ def load_model_local():
             bnb_4bit_use_double_quant=True,
         )
         
-        # Load tokenizer
-        _tokenizer = AutoTokenizer.from_pretrained(
-            HF_MODEL_ID,
-            trust_remote_code=True
-        )
-        _tokenizer.pad_token = _tokenizer.eos_token
-        _tokenizer.padding_side = "right"
+        tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_ID)
+        tokenizer.pad_token = tokenizer.eos_token
         
-        # Load base model with quantization
-        logger.info("Loading base model with 4-bit quantization...")
-        base_model = AutoModelForCausalLM.from_pretrained(
+        model = AutoModelForCausalLM.from_pretrained(
             HF_MODEL_ID,
             quantization_config=bnb_config,
             device_map="auto",
@@ -131,327 +100,157 @@ def load_model_local():
             torch_dtype=torch.float16,
         )
         
-        # Load LoRA adapters if specified
         if HF_LORA_ID:
-            logger.info(f"Loading LoRA adapters from: {HF_LORA_ID}")
-            _model = PeftModel.from_pretrained(base_model, HF_LORA_ID)
-        else:
-            logger.info("No LoRA adapters specified, using base model")
-            _model = base_model
+            logger.info(f"Loading LoRA adapters: {HF_LORA_ID}")
+            model = PeftModel.from_pretrained(model, HF_LORA_ID)
         
-        _model.eval()
+        _model = model
+        _tokenizer = tokenizer
         _model_loaded = True
-        logger.info("✓ Model loaded successfully!")
         
+        logger.info("Model loaded successfully!")
         return _model, _tokenizer
         
     except Exception as e:
-        logger.error(f"Failed to load model: {str(e)}")
-        _model = None
-        _tokenizer = None
-        _model_loaded = False
+        logger.error(f"Failed to load model: {e}")
         return None, None
 
 
-def generate_local(prompt: str) -> Optional[str]:
-    """
-    Generate a response using the locally loaded model.
-    
-    Args:
-        prompt: The formatted prompt including system message
-    
-    Returns:
-        Generated text, or None if generation fails
-    """
-    import torch
-    
+def generate_local(prompt: str) -> str:
+    """Generate response using local model."""
     model, tokenizer = load_model_local()
     
     if model is None or tokenizer is None:
-        return None
+        return ""
     
     try:
-        # Tokenize the prompt
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=1024
-        ).to(model.device)
+        import torch
         
-        input_length = inputs['input_ids'].shape[1]
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
         
-        # Generate response
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=MAX_NEW_TOKENS,
                 temperature=TEMPERATURE,
-                top_p=TOP_P,
                 do_sample=True,
+                top_p=0.9,
                 pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
             )
         
-        # Decode only the new tokens (not the input)
-        response = tokenizer.decode(
-            outputs[0][input_length:],
-            skip_special_tokens=True
-        ).strip()
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Extract only the assistant's response
+        if "[/INST]" in response:
+            response = response.split("[/INST]")[-1].strip()
+        elif "assistant" in response.lower():
+            parts = response.lower().split("assistant")
+            if len(parts) > 1:
+                response = parts[-1].strip()
         
         return response
         
     except Exception as e:
-        logger.error(f"Generation error: {str(e)}")
-        return None
+        logger.error(f"Generation error: {e}")
+        return ""
 
 
-# =============================================================================
-# HuggingFace Inference API
-# =============================================================================
+def build_prompt(user_message: str, route: List[str], result: Dict, is_game_day: bool) -> str:
+    """Build the prompt for the LLM."""
+    route_str = " → ".join(route) if route else "No route"
+    total_wait = safe_int(result.get("total_wait"), 0)
+    
+    steps_text = ""
+    for i, step in enumerate(result.get("steps", []), 1):
+        bar = step.get("bar", "Unknown")
+        arrival = format_time_12h(step.get("arrival"))
+        departure = format_time_12h(step.get("departure", step.get("depart")))
+        wait = safe_int(step.get("wait"), 5)
+        steps_text += f"{i}. {bar}: arrive {arrival}, leave {departure}, wait ~{wait}min\n"
+    
+    context = f"""Route: {route_str}
+Total wait: {total_wait} minutes
+Game day: {'Yes' if is_game_day else 'No'}
+Itinerary:
+{steps_text}"""
+    
+    prompt = f"""<s>[INST] <<SYS>>
+{SYSTEM_PROMPT}
+<</SYS>>
 
-async def generate_huggingface(prompt: str) -> Optional[str]:
-    """
-    Generate using HuggingFace Inference Endpoints API.
-    
-    This is useful if you want to run the model on HuggingFace's infrastructure
-    instead of managing your own GPU server.
-    
-    Args:
-        prompt: The formatted prompt
-    
-    Returns:
-        Generated text, or None if request fails
-    """
-    import httpx
-    
-    if not HF_INFERENCE_URL or not HF_API_TOKEN:
-        logger.warning("HF Inference not configured")
-        return None
-    
-    headers = {
-        "Authorization": f"Bearer {HF_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": MAX_NEW_TOKENS,
-            "temperature": TEMPERATURE,
-            "top_p": TOP_P,
-            "do_sample": True,
-            "return_full_text": False
-        }
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                HF_INFERENCE_URL,
-                headers=headers,
-                json=payload,
-                timeout=60.0
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                return result[0].get("generated_text", "")
-            return None
-            
-    except Exception as e:
-        logger.error(f"HF Inference error: {str(e)}")
-        return None
-
-
-# =============================================================================
-# Prompt Formatting
-# =============================================================================
-
-def format_prompt(
-    user_message: str,
-    route_info: Optional[Dict[str, Any]] = None,
-    parsed_info: Optional[Dict[str, Any]] = None
-) -> str:
-    """
-    Format a prompt for the model with route context.
-    
-    Creates a structured prompt that includes the system message, route
-    optimization results, and the user's original request.
-    
-    Args:
-        user_message: The user's original request
-        route_info: Results from route optimization
-        parsed_info: What NLU extracted from the request
-    
-    Returns:
-        Formatted prompt ready for the model
-    """
-    # Build context about the route
-    context_parts = []
-    
-    if route_info:
-        if route_info.get("feasible"):
-            context_parts.append("Route optimization successful!")
-            context_parts.append(f"Total wait time: {route_info.get('total_wait', 0)} minutes")
-            
-            steps = route_info.get("steps", [])
-            if steps:
-                context_parts.append("\nItinerary:")
-                for i, step in enumerate(steps, 1):
-                    context_parts.append(
-                        f"{i}. {step['bar']}: Arrive {step['arrival']}, "
-                        f"Leave {step['depart']} (wait: {step['wait']} min)"
-                    )
-        else:
-            context_parts.append(f"Route not feasible: {route_info.get('reason', 'Unknown')}")
-    
-    if parsed_info:
-        context_parts.append(f"\nBars requested: {', '.join(parsed_info.get('bars', []))}")
-        if parsed_info.get('start_time'):
-            context_parts.append(f"Start time: {parsed_info['start_time']}")
-        context_parts.append(f"Group size: {parsed_info.get('group_size', 2)}")
-        if parsed_info.get('is_game_day'):
-            context_parts.append("Game day: Yes")
-    
-    context = "\n".join(context_parts) if context_parts else ""
-    
-    # Format using Phi-3.5's chat template
-    prompt = f"""<|system|>
-{SYSTEM_PROMPT}<|end|>
-<|user|>
 User request: {user_message}
 
-{context}<|end|>
-<|assistant|>
-"""
+{context}
+
+Provide a friendly, conversational response with the optimized route. [/INST]"""
     
     return prompt
 
 
-# =============================================================================
-# Main Generation Function
-# =============================================================================
-
 async def generate_response(
     user_message: str,
-    route_info: Optional[Dict[str, Any]] = None,
-    parsed_info: Optional[Dict[str, Any]] = None,
-    use_direct_inference: bool = False
-) -> Optional[str]:
-    """
-    Generate a response using the configured model backend.
-    
-    This is the main entry point for LLM generation. It formats the prompt
-    and routes to the appropriate backend (local, HuggingFace, or disabled).
-    
-    Args:
-        user_message: The user's original request
-        route_info: Results from route optimization
-        parsed_info: What NLU extracted
-        use_direct_inference: If True, let model generate route directly
-    
-    Returns:
-        Generated response string, or None if unavailable
-    """
-    # Format the prompt
-    prompt = format_prompt(user_message, route_info, parsed_info)
-    
-    logger.info(f"Generating response with backend: {MODEL_BACKEND}")
-    
-    # Route to appropriate backend
-    if MODEL_BACKEND == "local":
-        # Local generation is synchronous, run in thread pool
-        import asyncio
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, generate_local, prompt)
-    
-    elif MODEL_BACKEND == "huggingface":
-        return await generate_huggingface(prompt)
-    
-    else:
-        logger.info("Model backend disabled, using fallback")
-        return None
-
-
-# =============================================================================
-# Fallback Response Generation
-# =============================================================================
-
-def generate_fallback_response(
-    route_info: Dict[str, Any],
-    parsed_info: Dict[str, Any]
+    route: List[str],
+    result: Dict,
+    is_game_day: bool = False
 ) -> str:
-    """
-    Generate a rule-based response when the LLM is unavailable.
+    """Generate response using the configured backend."""
+    try:
+        if MODEL_BACKEND == "local":
+            prompt = build_prompt(user_message, route, result, is_game_day)
+            response = generate_local(prompt)
+            if response:
+                return response
+        
+        # Fallback to rule-based response
+        return generate_fallback(route, result, is_game_day)
+        
+    except Exception as e:
+        logger.error(f"Error generating response: {e}")
+        return generate_fallback(route, result, is_game_day)
+
+
+def generate_fallback(route: List[str], result: Dict, is_game_day: bool) -> str:
+    """Generate a rule-based response when LLM is unavailable."""
+    if not route:
+        return "I couldn't plan a route. Please try different bars or times."
     
-    This ensures the app always provides useful output, even without
-    GPU access or when the model service is down.
+    if not result or not result.get("feasible", False):
+        reason = result.get("reason", "timing constraints") if result else "unknown"
+        return f"😅 Couldn't make that route work due to {reason}. Try an earlier time!"
     
-    Args:
-        route_info: Results from route optimization
-        parsed_info: What NLU extracted
+    steps = result.get("steps", [])
+    total_wait = safe_int(result.get("total_wait"), 0)
     
-    Returns:
-        Formatted response string
-    """
-    if not route_info.get("feasible"):
-        reason = route_info.get("reason", "timing constraints")
-        return (
-            f"😅 I couldn't find a feasible route - {reason}. "
-            f"Try adjusting your start time or picking different bars!"
-        )
-    
-    steps = route_info.get("steps", [])
-    total_wait = route_info.get("total_wait", 0)
-    
-    if not steps:
-        return "I found a route but couldn't format it. Please try again!"
-    
-    # Build the response
-    lines = ["🍺 Here's your optimized bar hopping route!\n"]
+    lines = ["🍺 Here's your optimized route!\n"]
     
     for i, step in enumerate(steps, 1):
-        # Convert 24h to 12h
-        def to_12h(time_str):
-            h, m = map(int, time_str.split(':'))
-            period = "PM" if h >= 12 else "AM"
-            h = h % 12 or 12
-            return f"{h}:{m:02d} {period}"
+        bar = step.get("bar", "Unknown")
+        arrival = format_time_12h(step.get("arrival"))
+        departure = format_time_12h(step.get("departure", step.get("depart")))
+        wait = safe_int(step.get("wait"), 5)
         
-        lines.append(
-            f"**{i}. {step['bar']}**\n"
-            f"   Arrive: {to_12h(step['arrival'])} → Leave: {to_12h(step['depart'])}\n"
-            f"   Expected wait: ~{step['wait']} min\n"
-        )
+        lines.append(f"**{i}. {bar}**")
+        lines.append(f"   Arrive: {arrival} → Leave: {departure}")
+        lines.append(f"   Wait: ~{wait} min\n")
     
-    # Summary
     if total_wait < 30:
-        wait_comment = "Minimal waiting tonight! 🎉"
+        wait_note = "Minimal waiting tonight! 🎉"
     elif total_wait < 60:
-        wait_comment = "Pretty reasonable wait times!"
+        wait_note = "Pretty reasonable wait times!"
     else:
-        wait_comment = "Some waiting, but worth it!"
+        wait_note = "Some waiting, but worth it!"
     
-    lines.append(f"\n**Total wait: {total_wait} min** - {wait_comment}")
+    lines.append(f"**Total wait: {total_wait} min** - {wait_note}")
     
-    if parsed_info.get("is_game_day"):
-        lines.append("\n\n🏈 *Game day crowds factored in!*")
+    if is_game_day:
+        lines.append("\n🏈 Game day crowds factored in!")
     
     return "\n".join(lines)
 
 
-# =============================================================================
-# Health Check
-# =============================================================================
-
-async def check_model_health() -> Dict[str, Any]:
-    """
-    Check the health/availability of the model service.
-    
-    Returns a status report for the /model/health endpoint.
-    """
+def check_model_health() -> Dict[str, Any]:
+    """Check model health status."""
     status = {
         "backend": MODEL_BACKEND,
         "available": False,
@@ -459,7 +258,6 @@ async def check_model_health() -> Dict[str, Any]:
         "gpu_available": False
     }
     
-    # Check GPU
     try:
         import torch
         status["gpu_available"] = torch.cuda.is_available()
@@ -468,22 +266,21 @@ async def check_model_health() -> Dict[str, Any]:
     except:
         pass
     
-    # Check model availability based on backend
     if MODEL_BACKEND == "local":
         if status["gpu_available"]:
             model, tokenizer = load_model_local()
             status["available"] = model is not None
-            status["message"] = "Model loaded" if model else "Failed to load model"
+            status["message"] = "Model loaded" if model else "Failed to load"
         else:
             status["available"] = False
-            status["message"] = "No GPU available for local inference"
+            status["message"] = "No GPU available"
     
     elif MODEL_BACKEND == "huggingface":
-        status["available"] = bool(HF_INFERENCE_URL and HF_API_TOKEN)
+        status["available"] = bool(HF_API_TOKEN)
         status["message"] = "HF configured" if status["available"] else "Missing HF config"
     
     else:
         status["available"] = False
-        status["message"] = "Model backend disabled - using rule-based responses"
+        status["message"] = "Model disabled - using rule-based responses"
     
     return status

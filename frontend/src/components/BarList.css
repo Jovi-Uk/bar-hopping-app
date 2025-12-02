@@ -1,0 +1,110 @@
+/* Bar List Styles */
+
+.bar-list {
+  padding: 1.5rem;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.bar-list.loading-state,
+.bar-list.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #718096;
+}
+
+.bar-list.loading-state .spinner {
+  margin-bottom: 1rem;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.bar-list-header {
+  margin-bottom: 1.5rem;
+}
+
+.bar-list-header h2 {
+  font-size: 1.25rem;
+  color: #1a365d;
+  margin-bottom: 0.25rem;
+}
+
+.bar-list-header p {
+  color: #718096;
+  font-size: 0.875rem;
+}
+
+.bars-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.bar-card {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.bar-card:hover {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  border-color: #2c5282;
+}
+
+.bar-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.bar-card-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.popularity-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.popularity-stars .star {
+  color: #e2e8f0;
+}
+
+.popularity-stars .star.filled {
+  color: #f6ad55;
+  fill: #f6ad55;
+}
+
+.bar-card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.bar-card-stats .stat {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #718096;
+  font-size: 0.875rem;
+}
+
+.bar-list-footer {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #f7fafc;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  color: #718096;
+}

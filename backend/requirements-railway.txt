@@ -1,0 +1,36 @@
+# =============================================================================
+# Railway Deployment Dependencies (Linux with GPU)
+# =============================================================================
+# This file is used by Railway for production deployment.
+# It includes all ML dependencies needed for the LLM.
+# =============================================================================
+
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.2
+
+# Data Processing  
+pandas==2.1.3
+openpyxl==3.1.2
+dateparser==1.2.0
+
+# Configuration
+python-dotenv==1.0.0
+
+# HTTP Client (for API calls)
+httpx==0.25.2
+
+# Production Server
+gunicorn==21.2.0
+
+# =============================================================================
+# ML/LLM Dependencies (Linux + CUDA GPU required)
+# =============================================================================
+torch>=2.0.0
+transformers==4.46.3
+accelerate==0.34.2
+peft==0.13.2
+bitsandbytes>=0.42.0
+sentencepiece>=0.1.99

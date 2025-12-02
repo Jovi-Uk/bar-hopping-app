@@ -1,0 +1,183 @@
+/* =============================================================================
+   Main Application Styles
+   ============================================================================= */
+
+:root {
+  --color-primary: #1a365d;
+  --color-primary-light: #2c5282;
+  --color-accent: #f6ad55;
+  --color-success: #48bb78;
+  --color-error: #f56565;
+  --color-bg: #f7fafc;
+  --color-bg-card: #ffffff;
+  --color-text: #2d3748;
+  --color-text-muted: #718096;
+  --color-border: #e2e8f0;
+  --font-family: 'Inter', sans-serif;
+  --radius-md: 0.5rem;
+  --radius-lg: 1rem;
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  background: var(--color-primary);
+  color: white;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-md);
+}
+
+.header-content h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.header-content p {
+  font-size: 0.875rem;
+  opacity: 0.9;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Model Status */
+.model-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  font-size: 0.875rem;
+}
+
+.model-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.model-status.online .status-dot {
+  background: var(--color-success);
+  animation: pulse 2s infinite;
+}
+
+.model-status.offline .status-dot {
+  background: var(--color-error);
+}
+
+.model-status .gpu-badge {
+  background: var(--color-accent);
+  color: var(--color-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Header Buttons */
+.header-btn {
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.header-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.header-btn.secondary {
+  background: transparent;
+}
+
+/* Main Content */
+.app-main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-section,
+.route-section {
+  background: var(--color-bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Footer */
+.app-footer {
+  padding: 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* LLM Badge */
+.llm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 0.5rem;
+  padding: 2px 8px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .app-main {
+    grid-template-columns: 1fr;
+  }
+  
+  .route-section {
+    min-height: 400px;
+  }
+  
+  .app-header {
+    flex-direction: column;
+    text-align: center;
+    gap: 1rem;
+  }
+  
+  .header-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}

@@ -1,0 +1,56 @@
+# =============================================================================
+# Git Ignore - Bar Hopping Optimizer
+# =============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Environment files (contain secrets!)
+.env
+.env.local
+.env.production
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Build outputs
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Model weights (too large for git)
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Cache
+.cache/

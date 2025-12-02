@@ -1,0 +1,222 @@
+/* Route Display Styles */
+
+.route-display {
+  padding: 1.5rem;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.route-display.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.empty-content {
+  max-width: 400px;
+}
+
+.empty-icon {
+  color: #718096;
+  opacity: 0.5;
+  margin-bottom: 1rem;
+}
+
+.empty-content h2 {
+  font-size: 1.25rem;
+  color: #2d3748;
+  margin-bottom: 0.5rem;
+}
+
+.empty-content > p {
+  color: #718096;
+  margin-bottom: 1.5rem;
+}
+
+.empty-hints {
+  text-align: left;
+  background: #f7fafc;
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+.empty-hints h3 {
+  font-size: 0.875rem;
+  color: #718096;
+  margin-bottom: 0.5rem;
+}
+
+.empty-hints ul {
+  list-style: none;
+  font-size: 0.875rem;
+}
+
+.empty-hints li {
+  padding: 0.25rem 0;
+  color: #2d3748;
+}
+
+.empty-hints li::before {
+  content: "• ";
+  color: #1a365d;
+}
+
+/* Route Header */
+.route-header {
+  margin-bottom: 1.5rem;
+}
+
+.route-header h2 {
+  font-size: 1.25rem;
+  color: #1a365d;
+  margin-bottom: 0.5rem;
+}
+
+.route-summary {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.summary-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #718096;
+  font-size: 0.875rem;
+}
+
+/* Success Message */
+.route-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.route-message.success {
+  background: #f0fff4;
+  border: 1px solid #c6f6d5;
+  color: #276749;
+}
+
+/* Timeline */
+.route-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-item {
+  display: flex;
+  gap: 1rem;
+}
+
+.timeline-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.marker-number {
+  width: 32px;
+  height: 32px;
+  background: #1a365d;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.marker-line {
+  width: 2px;
+  flex: 1;
+  min-height: 40px;
+  background: #e2e8f0;
+  margin: 0.25rem 0;
+}
+
+.timeline-card {
+  flex: 1;
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.venue-name {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.wait-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.wait-badge.wait-short {
+  background: #c6f6d5;
+  color: #276749;
+}
+
+.wait-badge.wait-medium {
+  background: #feebc8;
+  color: #c05621;
+}
+
+.wait-badge.wait-long {
+  background: #fed7d7;
+  color: #c53030;
+}
+
+.card-times {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.time-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.time-label {
+  font-size: 0.875rem;
+  color: #718096;
+}
+
+.time-value {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.time-arrow {
+  color: #718096;
+}
+
+.route-footer {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #f7fafc;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  color: #718096;
+}
